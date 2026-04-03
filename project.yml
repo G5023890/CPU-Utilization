@@ -1,0 +1,21 @@
+name: CPU MenuBar
+options:
+  bundleIdPrefix: com.grigorymordokhovich
+settings:
+  base:
+    MACOSX_DEPLOYMENT_TARGET: 13.0
+    SWIFT_VERSION: 6.0
+targets:
+  CPU MenuBar:
+    type: application
+    platform: macOS
+    sources:
+      - path: CPU MenuBar
+    info:
+      path: CPU MenuBar/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.grigorymordokhovich.cpumenubar
+        INFOPLIST_FILE: CPU MenuBar/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
