@@ -19,3 +19,6 @@ xcodebuild -project "CPU MenuBar.xcodeproj" -scheme "CPU MenuBar" build
 - Uses a low-overhead polling interval to keep energy use reasonable
 - Opens a tiny preferences popover from the status item
 - Optionally highlights high CPU usage in red above a configurable threshold
+
+## License
+Apache-2.0
