@@ -1,6 +1,11 @@
 import Darwin
 
-final class CPUUsageMonitor {
+protocol CPUUsageProviding {
+    func prime()
+    func sampleUsage() -> Double?
+}
+
+final class MachCPUUsageProvider: CPUUsageProviding {
     private var previousTicks: CPUUsageTicks?
 
     func prime() {

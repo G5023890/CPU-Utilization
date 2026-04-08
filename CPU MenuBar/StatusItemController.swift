@@ -1,39 +1,36 @@
 import AppKit
 
 @MainActor
-final class StatusItemController: NSObject {
+final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
-    private let statusItemView = StatusItemView()
-    private let preferences: AppPreferences
-    private let cpuMonitor = CPUUsageMonitor()
-    private let preferencesPopover: PreferencesPopoverController
-    private let statusMenu = NSMenu()
-    private var timer: Timer?
-    private var lastShownPercent: Int?
+    private let viewModel = CPUIndicatorViewModel()
+    private let processMonitor = ProcessCPUUsageMonitor()
+    private let preferences = AppPreferences()
+    private lazy var preferencesPopoverController = PreferencesPopoverController(preferences: preferences)
+    private let processesMenu = NSMenu()
+    private let statusItemView: StatusItemView
 
-    init(preferences: AppPreferences) {
-        self.preferences = preferences
-        statusItem = NSStatusBar.system.statusItem(withLength: 48)
-        preferencesPopover = PreferencesPopoverController(preferences: preferences)
+    override init() {
+        statusItem = NSStatusBar.system.statusItem(withLength: 32)
+        statusItemView = StatusItemView(viewModel: viewModel)
         super.init()
 
-        NSLog("CPU MenuBar status item created: %@", statusItem)
-        configureStatusItem()
-        configureMenu()
-        preferences.onChange = { [weak self] in
-            self?.refreshDisplayedTitle()
+        processMonitor.onChange = { [weak self] in
+            self?.rebuildProcessesMenu()
         }
+
+        configureStatusItem()
+        configureProcessesMenu()
     }
 
     func start() {
-        cpuMonitor.prime()
-        updateStatusItem(using: displayText(for: nil), percent: nil)
-        scheduleUpdates()
+        viewModel.start()
+        processMonitor.start()
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
+        viewModel.stop()
+        processMonitor.stop()
     }
 
     private func configureStatusItem() {
@@ -47,136 +44,152 @@ final class StatusItemController: NSObject {
         button.toolTip = "CPU usage"
         button.setAccessibilityLabel("CPU usage")
         button.isBordered = false
+        button.target = nil
+        button.action = nil
+        button.sendAction(on: [])
+        statusItem.menu = processesMenu
 
-        statusItemView.onLeftClick = { [weak self] in
-            self?.togglePreferencesPopover()
-        }
-        statusItemView.onRightClick = { [weak self] in
-            if self?.preferencesPopover.isShown == true {
-                self?.preferencesPopover.close()
-            }
-            self?.showContextMenu()
-        }
-
-        statusItemView.frame = button.bounds
         statusItemView.autoresizingMask = [.width, .height]
         button.addSubview(statusItemView)
+        statusItemView.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            statusItemView.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            statusItemView.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+            statusItemView.topAnchor.constraint(equalTo: button.topAnchor),
+            statusItemView.bottomAnchor.constraint(equalTo: button.bottomAnchor)
+        ])
     }
 
-    private func configureMenu() {
-        statusMenu.autoenablesItems = false
+    private func configureProcessesMenu() {
+        processesMenu.delegate = self
+        processesMenu.autoenablesItems = false
+    }
 
-        let preferencesItem = NSMenuItem(
-            title: "Preferences…",
-            action: #selector(showPreferences(_:)),
-            keyEquivalent: ","
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === processesMenu else {
+            return
+        }
+        rebuildProcessesMenu()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === processesMenu else {
+            return
+        }
+    }
+
+    private func rebuildProcessesMenu() {
+        processesMenu.removeAllItems()
+
+        processesMenu.addItem(headerItem())
+        processesMenu.addItem(.separator())
+
+        let topProcesses = processMonitor.topProcesses(limit: 10)
+        if topProcesses.isEmpty {
+            processesMenu.addItem(processRowItem(name: "No process data", cpuPercent: nil, isDimmed: true))
+        } else {
+            for process in topProcesses {
+                processesMenu.addItem(processRowItem(name: process.name, cpuPercent: process.cpuPercent, isDimmed: false))
+            }
+        }
+
+        if !processesMenu.items.isEmpty {
+            processesMenu.addItem(.separator())
+        }
+
+        processesMenu.addItem(
+            processRowItem(
+                name: "Total",
+                cpuPercent: processMonitor.totalCPUPercent(),
+                isDimmed: true
+            )
         )
-        preferencesItem.target = self
-        statusMenu.addItem(preferencesItem)
+        processesMenu.addItem(.separator())
 
-        statusMenu.addItem(.separator())
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(showPreferencesMenuItemClicked(_:)),
+            keyEquivalent: ""
+        )
+        settingsItem.target = self
+        processesMenu.addItem(settingsItem)
 
         let quitItem = NSMenuItem(
             title: "Quit CPU MenuBar",
-            action: #selector(quitApp(_:)),
-            keyEquivalent: "q"
+            action: #selector(quitAppMenuItemClicked(_:)),
+            keyEquivalent: ""
         )
         quitItem.target = self
-        statusMenu.addItem(quitItem)
+        processesMenu.addItem(quitItem)
     }
 
-    private func scheduleUpdates() {
-        guard timer == nil else {
-            return
-        }
-
-        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.refreshCPUUsage()
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
-    }
-
-    private func refreshCPUUsage() {
-        guard let usage = cpuMonitor.sampleUsage() else {
-            return
-        }
-
-        let percent = max(0, min(100, Int((usage * 100).rounded())))
-        lastShownPercent = percent
-
-        updateStatusItem(using: displayText(for: percent), percent: percent)
-    }
-
-    private func refreshDisplayedTitle() {
-        guard let lastShownPercent else {
-            return
-        }
-
-        updateStatusItem(using: displayText(for: lastShownPercent), percent: lastShownPercent)
-    }
-
-    private func updateStatusItem(using text: String, percent: Int?) {
-        statusItemView.update(text: text, color: resolvedTitleColor(for: percent))
-        NSLog("CPU MenuBar updated status item: %@", text)
-    }
-
-    private func displayText(for percent: Int?) -> String {
-        switch percent {
-        case .some(let value):
-            return "\(value)"
-        case .none:
-            return "--"
-        }
-    }
-
-    private func showContextMenu() {
-        if preferencesPopover.isShown {
-            preferencesPopover.close()
-        }
-
-        guard let event = NSApp.currentEvent else {
-            return
-        }
-
+    @objc
+    private func showPreferencesMenuItemClicked(_ sender: Any?) {
         guard let button = statusItem.button else {
             return
         }
 
-        NSMenu.popUpContextMenu(statusMenu, with: event, for: button)
-    }
-
-    @objc private func showPreferences(_ sender: Any?) {
-        togglePreferencesPopover()
-    }
-
-    private func togglePreferencesPopover() {
-        guard let button = statusItem.button else {
-            return
-        }
-
-        if preferencesPopover.isShown {
-            preferencesPopover.close()
+        if preferencesPopoverController.isShown {
+            preferencesPopoverController.close()
         } else {
-            preferencesPopover.show(relativeTo: button)
+            preferencesPopoverController.show(relativeTo: button)
         }
     }
 
-    @objc private func quitApp(_ sender: Any?) {
-        NSApp.terminate(nil)
+    @objc
+    private func quitAppMenuItemClicked(_ sender: Any?) {
+        NSApplication.shared.terminate(nil)
     }
 
-    private func resolvedTitleColor(for percent: Int?) -> NSColor {
-        guard
-            preferences.highCpuColorEnabled,
-            let percent,
-            percent >= Int(preferences.highCpuThreshold)
-        else {
-            return .labelColor
+    private func headerItem() -> NSMenuItem {
+        processRowItem(name: "Process", cpuPercent: 0, isDimmed: true, isHeader: true)
+    }
+
+    private func processRowItem(name: String, cpuPercent: Double?, isDimmed: Bool, isHeader: Bool = false) -> NSMenuItem {
+        let displayedPercent = isHeader ? "% CPU" : (cpuPercent.map(formatCPUPercent) ?? "")
+        let title = "\(name)\t\(displayedPercent)"
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        item.attributedTitle = tableAttributedTitle(
+            title,
+            isHeader: isHeader,
+            isDimmed: isDimmed
+        )
+        return item
+    }
+
+    private func tableAttributedTitle(_ text: String, isHeader: Bool, isDimmed: Bool) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .left
+        paragraph.lineBreakMode = .byTruncatingTail
+        let tabStop = NSTextTab(textAlignment: .right, location: 250)
+        paragraph.tabStops = [tabStop]
+        paragraph.defaultTabInterval = 250
+
+        return NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: isHeader ? .semibold : .regular),
+                .foregroundColor: isDimmed ? NSColor.secondaryLabelColor : NSColor.labelColor,
+                .paragraphStyle: paragraph
+            ]
+        )
+    }
+
+    private func formatCPUPercent(_ cpuPercent: Double) -> String {
+        if cpuPercent >= 10 {
+            return String(format: "%.0f%%", cpuPercent)
         }
 
-        return .systemRed
+        if cpuPercent >= 1 {
+            return String(format: "%.1f%%", cpuPercent)
+        }
+
+        if cpuPercent >= 0.1 {
+            return String(format: "%.2f%%", cpuPercent)
+        }
+
+        return String(format: "%.1f%%", cpuPercent)
     }
 }

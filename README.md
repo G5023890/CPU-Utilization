@@ -1,13 +1,13 @@
 # CPU MenuBar
 
-Minimal macOS menu bar app that shows the current CPU usage as a plain percentage.
+Ultra-minimal macOS menu bar app that shows the current CPU usage as a thin open arc with a centered number.
+
+Current version: `0.7`
 
 ## Build
 
-Requires Xcode 26+ and `xcodegen`.
+Requires Xcode 26+.
 
-```bash
-xcodegen generate
 xcodebuild -project "CPU MenuBar.xcodeproj" -scheme "CPU MenuBar" build
 ```
 
@@ -15,10 +15,13 @@ xcodebuild -project "CPU MenuBar.xcodeproj" -scheme "CPU MenuBar" build
 
 - Runs as a menu bar only app
 - Updates once per second
-- Shows only the current CPU percent in the menu bar
+- Shows CPU usage as a monochrome indicator with no percent sign
 - Uses a low-overhead polling interval to keep energy use reasonable
-- Opens a tiny preferences popover from the status item
-- Optionally highlights high CPU usage in red above a configurable threshold
+- Smooths the signal to avoid jitter
+
+## Visual Preview
+
+![CPU MenuBar preview](CPU%20MenuBar/BrandAssets/cpu-menubar-preview.png)
 
 ## License
 Apache-2.0
